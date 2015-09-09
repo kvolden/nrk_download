@@ -6,13 +6,11 @@ import io
 import sys
 import requests
 import datetime
+import argparse
 from bs4 import BeautifulSoup
 from libs import hls
 
 VERSION = "1.0.0"
-
-def usage():
-    print("Usage: nrk_download.py URL...")
 
 
 def progress(pct):
@@ -116,7 +114,7 @@ def download(url):
         srtfile.write(sub_srt)
         srtfile.close()
 
-    # Start dumping HLS stream:
+    # Start dumping HLS stream
     print(u"Saving {}.ts\n".format(out_filename))
     hls.dump(video_url, out_filename + ".ts", progress)
     
@@ -125,15 +123,16 @@ def download(url):
     
 def main(urls):
     print("NRK Download {}\n".format(VERSION))
-
-    if len(urls) == 0:
-        usage()
-        sys.exit(2)
-
     for i, url in enumerate(urls):
         print("Downloading {}/{}:".format(i+1, len(urls)))
         download(url)
 
 
+def getArgumentParser():
+    parser = argparse.ArgumentParser(description='Python script for downloading video and audio from NRK (Norwegian Broadcasting Corporation).')
+    parser.add_argument("URL", type=str, nargs="+", help="A list of URLs to download")
+    return parser
+
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    urls = getArgumentParser().parse_args().URL
+    main(urls)
