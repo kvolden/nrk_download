@@ -10,7 +10,7 @@ import argparse
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 def progress(pct):
@@ -23,7 +23,7 @@ def error(message):
 
     
 def xml2srt(text=''):
-    soup = BeautifulSoup(text)
+    soup = BeautifulSoup(text, "xml")
     result = u''
     zerotime = datetime.datetime.strptime("0", "%H")    # For simple converting to timedelta
     entries_skipped = 0                                 # To maintain continuous index increment even when fail
@@ -66,7 +66,7 @@ def download(url):
         error(e)
         return
 
-    soup = BeautifulSoup(req.text)
+    soup = BeautifulSoup(req.text, "lxml")
 
     # Critical elements:
     title_meta = soup.find("meta", attrs={"name" : "title"})
