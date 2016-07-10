@@ -10,8 +10,10 @@ import argparse
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 
+TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/"
+SUBS_BASE_URL = "https://tv.nrk.no/programsubtitles/"
 
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
@@ -57,82 +59,116 @@ def xml2srt(text=''):
     return result
 
 
-def download(url):
+def download(program_id):
+    session = requests.Session()
+    session.headers["User-Agent"] = ""
+    session.headers["app-version-android"] = "999"
+
+    req = session.get(TVAPI_BASE_URL + program_id)
+    #TODO: Exception handler
+    if not req.text:
+        error("Empty response from server. Non-existing program ID?")
+        return
+
+    response_data = req.json()
+
+    title = response_data["fullTitle"]
+    print(u"Found: {}".format(title))
+
+    if "mediaUrl" in response_data:
+        media_url = response_data["mediaUrl"]
+    else:
+        error("Could not find media stream. No longer available?")
+        return
+    
+    filename = re.sub('[/\\\?%\*:|"<>]', '_', title)   # not allowed: / \ ? % * : | " < >
+
+    # Ensure unique filename:
+    if os.path.isfile(filename + ".ts"):
+        index = 1
+        while(os.path.isfile(filename + " ({}).ts".format(index))):
+            index += 1
+        filename = filename + " ({})".format(index)
+
+    # Save subtitles, if any:
+    if response_data["hasSubtitles"]:
+        print(u"Saving {}.srt".format(filename))
+        subtitles_xml = requests.get(SUBS_BASE_URL + program_id).text
+        subtitles_srt = xml2srt(subtitles_xml)
+        srtfile = io.open(filename + ".srt", "w")
+        srtfile.write(subtitles_srt)
+        srtfile.close()
+
+    # Start dumping HLS stream:
+    print(u"Saving {}.ts\n".format(filename))
+    hls.dump(media_url, filename + ".ts", progress)
+
+    print("\n")
+
+
+def get_program_id_online(url):
     try:
         req = requests.get(url)
     except requests.exceptions.MissingSchema:
-        req = get_req("http://{}".format(url))
+        req = get_req("https://{}".format(url))
     except requests.exceptions.RequestException as e:
         error(e)
-        return
+        return None
 
     soup = BeautifulSoup(req.text, "lxml")
 
-    # Critical elements:
-    title_meta = soup.find("meta", attrs={"name" : "title"})
-    player_div = soup.find(id="playerelement")
-    if not title_meta or not player_div:
-        error("Did not recognize HTML structure. Check your url.")
-        return
+    # New program ID style:
+    program_id_meta = soup.find("meta", attrs={"name" : "programid"})
+    if program_id_meta:
+        program_id = program_id_meta["content"].strip()
 
-    # Create filename from title:
-    title = title_meta["content"].strip()
-    out_filename = re.sub('[/\\\?%\*:|"<>]', '_', title)   # not allowed: / \ ? % * : | " < >
+    # Old program ID style:
+    elif soup.figure and "data-video-id" in soup.figure:
+        program_id = soup.figure['data-video-id']
 
-    # Add episode number to filename if it exists:
-    episode_number_meta = soup.find("meta", attrs={"name" : "episodenumber"})
-    if episode_number_meta:
-        episode_number = int(episode_number_meta["content"].strip())
-        out_filename += " E{:02d}".format(episode_number)
-
-    # Print confirmation
-    print(u"Found: {}".format(title))
-
-    # Get url to videostream:
-    video_url = player_div.get("data-hls-media")
-    if not video_url:
-        error("Could not find video stream.")
-        return
-    video_url = video_url.split("?")[0]
-
-    # Ensure unique filename:
-    if os.path.isfile(out_filename + ".ts"):
-        index = 1
-        while(os.path.isfile(out_filename + " ({}).ts".format(index))):
-            index += 1
-        out_filename = out_filename + " ({})".format(index)
-
-    # Save subtitles if any:
-    if player_div.get('data-subtitlesurl'):
-        print(u"Saving {}.srt".format(out_filename))
-        sub_url = "http://{}{}".format(req.url.split("/")[2], player_div.get("data-subtitlesurl"))
-
-        sub_xml = requests.get(sub_url).text
-        sub_srt = xml2srt(sub_xml)
+    # Not found:
+    else:
+        program_id = None
+        
+    return program_id
     
-        srtfile = io.open(out_filename + ".srt", "w")
-        srtfile.write(sub_srt)
-        srtfile.close()
 
-    # Start dumping HLS stream
-    print(u"Saving {}.ts\n".format(out_filename))
-    hls.dump(video_url, out_filename + ".ts", progress)
+def get_program_id(string):
+    # Extract program ID from string. Either clean or wrapped in forward slashes
+    # from being inside url:
+    # New program ID style:
+    program_id_match = re.search("(^|/)([A-Z]{4}[0-9]{8})($|/)", string)
+    # Old program ID style:
+    if not program_id_match:
+        program_id_match = re.search("(^|PS\*)([0-9]+)($|/)", string)
+
+    if program_id_match:
+        program_id = program_id_match.group(2)
+
+    # If not able to extract, open url, search for program id in html:
+    else:
+        program_id = get_program_id_online(string)   # Returns None if not found
+
+    return program_id
     
-    print("\n")
-
     
 def main(urls):
     print("NRK Download {}\n".format(VERSION))
     for i, url in enumerate(urls):
-        print("Downloading {}/{}:".format(i+1, len(urls)))
-        download(url)
+        print("Downloading {} of {}:".format(i+1, len(urls)))
+        program_id = get_program_id(url)
+        if program_id:
+            download(program_id)
+        else:
+            error("Could not parse program ID from '{}'".format(url))
+        
 
-
-def getArgumentParser():
+def get_argument_parser():
     parser = argparse.ArgumentParser(description='Python script for downloading video and audio from NRK (Norwegian Broadcasting Corporation).')
-    parser.add_argument("URL", type=str, nargs="+", help="A list of URLs to download")
+    parser.add_argument("PROGRAMS", type=str, nargs="+", help="A list of URLs or program IDs to download")
     return parser
 
+
 if __name__ == "__main__":
-    urls = getArgumentParser().parse_args().URL
-    main(urls)
+    programs = get_argument_parser().parse_args().PROGRAMS
+    main(programs)
