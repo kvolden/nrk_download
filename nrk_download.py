@@ -7,13 +7,15 @@ import sys
 import requests
 import datetime
 import argparse
+import json
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 
 TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/"
 SUBS_BASE_URL = "https://tv.nrk.no/programsubtitles/"
+MIMIR_BASE_URL = "https://mimir.nrk.no/plugin/1.0/static?mediaId="
 
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
@@ -115,48 +117,57 @@ def get_program_id_online(url):
         error(e)
         return None
 
+    # Defaults to not found:
+    program_id = None
+    
     soup = BeautifulSoup(req.text, "lxml")
-
-    # New program ID style:
-    program_id_meta = soup.find("meta", attrs={"name" : "programid"})
-    if program_id_meta:
-        program_id = program_id_meta["content"].strip()
-
-    # Old program ID style:
-    elif soup.figure and "data-video-id" in soup.figure:
-        program_id = soup.figure['data-video-id']
-
-    # Not found:
+    
+    if MIMIR_BASE_URL in url:
+        json_info = json.loads(soup.script.get_text())
+        # Check that it's a hit:
+        if "activeMedia" in json_info:
+            program_id = json_info["activeMedia"]["psId"]
+        
     else:
-        program_id = None
+        # New program ID style:
+        program_id_meta = soup.find("meta", attrs={"name" : "programid"})
+        if program_id_meta:
+            program_id = program_id_meta["content"].strip()
+
+        # Old program ID style:
+        elif soup.figure and "data-video-id" in soup.figure:
+            program_id = soup.figure['data-video-id']
         
     return program_id
-    
+
 
 def get_program_id(string):
-    # Extract program ID from string. Either clean or wrapped in forward slashes
-    # from being inside url:
+    # Extract program ID from string. Either clean or inside url:
     # New program ID style:
     program_id_match = re.search("(^|/)([A-Z]{4}[0-9]{8})($|/)", string)
     # Old program ID style:
     if not program_id_match:
-        program_id_match = re.search("(^|PS\*)([0-9]+)($|/)", string)
-
+        program_id_match = re.search("(^|/)PS\*([0-9]+)($|/)", string)
+    # nrk.no/skole style mediaId:
+    if not program_id_match:
+        media_id_match = re.search("(^|mediaId=)([0-9]+)($|&)", string)
+        
     if program_id_match:
         program_id = program_id_match.group(2)
-
-    # If not able to extract, open url, search for program id in html:
+    elif media_id_match:
+        program_id = get_program_id_online(MIMIR_BASE_URL + media_id_match.group(2))
+    # If not able to extract, try using string as url, search for program id in html:
     else:
         program_id = get_program_id_online(string)   # Returns None if not found
 
     return program_id
     
     
-def main(urls):
+def main(programs):
     print("NRK Download {}\n".format(VERSION))
-    for i, url in enumerate(urls):
-        print("Downloading {} of {}:".format(i+1, len(urls)))
-        program_id = get_program_id(url)
+    for i, program in enumerate(programs):
+        print("Downloading {} of {}:".format(i+1, len(programs)))
+        program_id = get_program_id(program)
         if program_id:
             download(program_id)
         else:

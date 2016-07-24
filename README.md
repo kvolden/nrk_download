@@ -7,7 +7,7 @@ Usage:
 
 ```python nrk_download.py PROGRAMS...```
 
-PROGRAMS is one or more arguments consisting of either the programs' program ID or URLs of the pages of the programs. Found to work on http://tv.nrk.no, http://tv.nrksuper.no, http://radio.nrk.no and http://www.nrk.no/video/. Other sources may work, but you might have to find the program ID in the source yourself.
+PROGRAMS is one or more arguments consisting of either the programs' program ID or URLs of the pages of the programs. Found to work on https://tv.nrk.no, https://tv.nrksuper.no, https://radio.nrk.no, https://www.nrk.no/video/ and https://www.nrk.no/skole. Other sources may work, but you might have to find the program ID in the source yourself.
 
 Subtitles will be downloaded if they are available, converted to SubRip format and saved as a separate .srt file. Video and audio will be saved as an MPEG Transport Stream container with original encodings.
 
