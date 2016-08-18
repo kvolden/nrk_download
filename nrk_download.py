@@ -11,11 +11,11 @@ import json
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.1.1"
+VERSION = "1.1.2"
 
-TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/"
-SUBS_BASE_URL = "https://tv.nrk.no/programsubtitles/"
-MIMIR_BASE_URL = "https://mimir.nrk.no/plugin/1.0/static?mediaId="
+TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/{}"
+SUBS_BASE_URL = "http://v8.psapi.nrk.no/programs/{}/subtitles/tt"
+MIMIR_BASE_URL = "https://mimir.nrk.no/plugin/1.0/static?mediaId={}"
 
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
@@ -66,7 +66,7 @@ def download(program_id):
     session.headers["User-Agent"] = ""
     session.headers["app-version-android"] = "999"
 
-    req = session.get(TVAPI_BASE_URL + program_id)
+    req = session.get(TVAPI_BASE_URL.format(program_id))
     #TODO: Exception handler
     if not req.text:
         error("Empty response from server. Non-existing program ID?")
@@ -95,7 +95,7 @@ def download(program_id):
     # Save subtitles, if any:
     if response_data["hasSubtitles"]:
         print(u"Saving {}.srt".format(filename))
-        subtitles_xml = requests.get(SUBS_BASE_URL + program_id).text
+        subtitles_xml = requests.get(SUBS_BASE_URL.format(program_id)).text
         subtitles_srt = xml2srt(subtitles_xml)
         srtfile = io.open(filename + ".srt", "w")
         srtfile.write(subtitles_srt)
@@ -155,7 +155,7 @@ def get_program_id(string):
     if program_id_match:
         program_id = program_id_match.group(2)
     elif media_id_match:
-        program_id = get_program_id_online(MIMIR_BASE_URL + media_id_match.group(2))
+        program_id = get_program_id_online(MIMIR_BASE_URL.format(media_id_match.group(2)))
     # If not able to extract, try using string as url, search for program id in html:
     else:
         program_id = get_program_id_online(string)   # Returns None if not found
