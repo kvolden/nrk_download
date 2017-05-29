@@ -5,16 +5,15 @@ import os
 import io
 import sys
 import requests
-import datetime
 import argparse
 import json
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.1.2"
+VERSION = "1.1.3"
 
+TVAPI_HEADERS  = {'app-version-android': '999'}
 TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/{}"
-SUBS_BASE_URL = "http://v8.psapi.nrk.no/programs/{}/subtitles/tt"
 MIMIR_BASE_URL = "https://mimir.nrk.no/plugin/1.0/static?mediaId={}"
 
 def progress(pct):
@@ -26,152 +25,139 @@ def error(message):
     print("Error: {}".format(message))
 
     
-def xml2srt(text=''):
-    soup = BeautifulSoup(text, "xml")
-    result = u''
-    zerotime = datetime.datetime.strptime("0", "%H")    # For simple converting to timedelta
-    entries_skipped = 0                                 # To maintain continuous index increment even when fail
-    prev_end = zerotime                                 # Previous section end time
+def get_req(url, headers = None):
+    try:
+        req = requests.get(url, headers = headers)
+    except requests.exceptions.MissingSchema:
+        req = get_req("https://{}".format(url), session)
+    except requests.exceptions.RequestException as e:
+        error(e)
+        req = None
+    return req
 
-    for i, p in enumerate(soup("p"), start=1):
-        try:                                            # Sometimes malformed with negative duration
-            begin = datetime.datetime.strptime(p["begin"], "%H:%M:%S.%f")
-            end = begin + (datetime.datetime.strptime(p["dur"], "%H:%M:%S.%f") - zerotime)
-        except:
-            entries_skipped += 1
-            continue
 
-        if begin.hour >= 10:                            # Compensate erroneous 10 hour tape offset
-            begin -= datetime.timedelta(hours = 10)
-        if begin < prev_end:                            # Prevent overlap
-            begin = prev_end
+def create_filename_base(title):
+    basename = re.sub('[/\\\?%\*:|"<>]', '_', title)
+    if os.path.isfile(u'{}.ts'.format(basename)):
+        i = 1
+        while os.path.isfile(u'{} ({}).ts'.format(basename, i)):
+            i += 1
+        basename = u'{} ({}).ts'.format(basename, i)
+    return basename
 
-        prev_end = end
-        
-        section = u"{}\n".format(i - entries_skipped)    # u"" to make sure it's unicode in both python 2.7 and 3
-        section += "{},{:03d} --> ".format(begin.strftime("%H:%M:%S"), begin.microsecond/1000)
-        section += "{},{:03d}\n".format(end.strftime("%H:%M:%S"), end.microsecond/1000)
-        if p.br:
-            p.br.replace_with("\n")
-        section += p.text
-        section = section.strip()
-        section = re.sub("[\n]{2,}", "\n", section)
-        result += section + "\n\n"
-            
-    return result
+    
+def nrk_vtt_to_srt(vtt):
+    vtt_cues = re.split('\r?\n\r?\n', vtt)[1:]  # First block is 'WEBVTT' and headers
+    srt_cues = []
+    for cue in vtt_cues:
+        cue_lines = cue.splitlines()
+        cue_lines[1] = cue_lines[1].replace('.', ',')
+        srt_cues.append('\n'.join(cue_lines))
+    return '\n\n'.join(srt_cues)
+
+
+def get_vtt_file_url(media_url):
+    main_manifest_req = get_req(media_url)
+    for line in main_manifest_req.text.splitlines():
+        if line.startswith('#EXT-X-MEDIA:TYPE=SUBTITLES'):
+            sub_stream_line = line
+            break
+    sub_manifest_url = re.search('URI="([^"]+)"', sub_stream_line).group(1)
+    sub_manifest_req = get_req(sub_manifest_url)
+    for line in sub_manifest_req.text.splitlines():
+        if not line[0] == '#':
+            sub_filename = line
+            break
+    return requests.compat.urljoin(sub_manifest_url, sub_filename)
+
+
+def save_subtitles(media_url, filename):
+    print(u"Saving {}".format(filename))
+    sub_url = get_vtt_file_url(media_url)
+    vtt_req = get_req(sub_url)
+    srt = nrk_vtt_to_srt(vtt_req.text)
+
+    with io.open(filename, 'w') as f:
+        f.write(srt)
+
+
+def save_stream(json_data):
+    title = json_data.get('fullTitle') or json_data.get('title')
+    print(u"Found {}".format(title))
+    filename_base = create_filename_base(title)
+
+    if json_data.get('hasSubtitles'):
+        save_subtitles(json_data['mediaUrl'], u'{}.srt'.format(filename_base))
+
+    print(u"Saving {}.ts\n".format(filename_base))
+    hls.dump(json_data['mediaUrl'], u'{}.ts'.format(filename_base), progress)
 
 
 def download(program_id):
-    session = requests.Session()
-    session.headers["User-Agent"] = ""
-    session.headers["app-version-android"] = "999"
-
-    req = session.get(TVAPI_BASE_URL.format(program_id))
-    #TODO: Exception handler
-    if not req.text:
-        error("Empty response from server. Non-existing program ID?")
-        return
-
+    req = get_req(TVAPI_BASE_URL.format(program_id), TVAPI_HEADERS)
     response_data = req.json()
-
-    title = response_data["fullTitle"]
-    print(u"Found: {}".format(title))
-
-    if "mediaUrl" in response_data:
-        media_url = response_data["mediaUrl"]
-    else:
+    if not response_data:
+        error("Empty response from server. Non-existing program ID?")
+    elif 'mediaUrl' not in response_data:
         error("Could not find media stream. No longer available?")
-        return
-    
-    filename = re.sub('[/\\\?%\*:|"<>]', '_', title)   # not allowed: / \ ? % * : | " < >
-
-    # Ensure unique filename:
-    if os.path.isfile(filename + ".ts"):
-        index = 1
-        while(os.path.isfile(filename + " ({}).ts".format(index))):
-            index += 1
-        filename = filename + " ({})".format(index)
-
-    # Save subtitles, if any:
-    if response_data["hasSubtitles"]:
-        print(u"Saving {}.srt".format(filename))
-        subtitles_xml = requests.get(SUBS_BASE_URL.format(program_id)).text
-        subtitles_srt = xml2srt(subtitles_xml)
-        srtfile = io.open(filename + ".srt", "w")
-        srtfile.write(subtitles_srt)
-        srtfile.close()
-
-    # Start dumping HLS stream:
-    print(u"Saving {}.ts\n".format(filename))
-    hls.dump(media_url, filename + ".ts", progress)
-
-    print("\n")
-
-
-def get_program_id_online(url):
-    try:
-        req = requests.get(url)
-    except requests.exceptions.MissingSchema:
-        req = get_req("https://{}".format(url))
-    except requests.exceptions.RequestException as e:
-        error(e)
-        return None
-
-    # Defaults to not found:
-    program_id = None
-    
-    soup = BeautifulSoup(req.text, "lxml")
-    
-    if MIMIR_BASE_URL in url:
-        json_info = json.loads(soup.script.get_text())
-        # Check that it's a hit:
-        if "activeMedia" in json_info:
-            program_id = json_info["activeMedia"]["psId"]
-        
     else:
-        # New program ID style:
-        program_id_meta = soup.find("meta", attrs={"name" : "programid"})
-        if program_id_meta:
-            program_id = program_id_meta["content"].strip()
+        save_stream(response_data)
+        print('\n')
 
-        # Old program ID style:
-        elif soup.figure and "data-video-id" in soup.figure:
-            program_id = soup.figure['data-video-id']
-        
+
+def get_program_id_from_html(url):
+    # Returns None if not found in html
+    req = get_req(url)
+    if not req:
+        program_id = None
+    else:
+        soup = BeautifulSoup(req.text, 'lxml')
+        id_element = soup.find('section', {'id': 'program-info'}) or soup.figure
+        if not id_element:
+            program_id = None
+        else:
+            program_id = (id_element.get('data-ga-from-id') or
+                          id_element.get('data-video-id'))
     return program_id
 
 
-def get_program_id(string):
-    # Extract program ID from string. Either clean or inside url:
-    # New program ID style:
-    program_id_match = re.search("(^|/)([A-Z]{4}[0-9]{8})($|/)", string)
-    # Old program ID style:
-    if not program_id_match:
-        program_id_match = re.search("(^|/)PS\*([0-9]+)($|/)", string)
-    # nrk.no/skole style mediaId:
-    if not program_id_match:
-        media_id_match = re.search("(^|mediaId=)([0-9]+)($|&)", string)
-        
+def get_program_id_from_media_id(media_id):
+    url = MIMIR_BASE_URL.format(media_id)
+    req = get_req(url)
+    if not req:
+        program_id = None
+    else:
+        soup = BeautifulSoup(req.text, 'lxml')
+        json_info = json.loads(soup.script.get_text())
+        program_id = json_info.get('activeMedia', {}).get('psId')
+    return program_id
+
+
+def get_program_id(passed_string):
+    # Extract program ID from string:
+    program_id_match = (re.search("(^|/)([A-Z]{4}\d{8})($|/)", passed_string) or
+                        re.search("(^|/)PS\*([\da-f-]+)($|/)", passed_string))
     if program_id_match:
         program_id = program_id_match.group(2)
-    elif media_id_match:
-        program_id = get_program_id_online(MIMIR_BASE_URL.format(media_id_match.group(2)))
-    # If not able to extract, try using string as url, search for program id in html:
     else:
-        program_id = get_program_id_online(string)   # Returns None if not found
-
+        # nrk.no/skole style mediaId:
+        media_id_match = re.search("(^|mediaId=)([0-9]+)($|&)", passed_string)
+        if media_id_match:
+            program_id = get_program_id_from_media_id(media_id_match.group(2))
+        else:
+            program_id = get_program_id_from_html(passed_string)
     return program_id
-    
-    
+
+
 def main(programs):
     print("NRK Download {}\n".format(VERSION))
     for i, program in enumerate(programs):
-        print("Downloading {} of {}:".format(i+1, len(programs)))
+        print(u"Downloading {} of {}:".format(i+1, len(programs)))
         program_id = get_program_id(program)
         if program_id:
             download(program_id)
         else:
-            error("Could not parse program ID from '{}'".format(url))
+            error(u"Could not parse program ID from '{}'".format(program))
         
 
 def get_argument_parser():
