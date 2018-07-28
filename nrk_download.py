@@ -24,7 +24,7 @@ def progress(pct):
 def error(message):
     print("Error: {}".format(message))
 
-    
+
 def get_req(url, headers = None):
     try:
         req = requests.get(url, headers = headers)
@@ -45,7 +45,7 @@ def create_filename_base(title):
         basename = u'{} ({}).ts'.format(basename, i)
     return basename
 
-    
+
 def nrk_vtt_to_srt(vtt):
     vtt_cues = re.split('\r?\n\r?\n', vtt)[1:]  # First block is 'WEBVTT' and headers
     srt_cues = []
@@ -109,16 +109,20 @@ def get_program_id_from_html(url):
     # Returns None if not found in html
     req = get_req(url)
     if not req:
-        program_id = None
-    else:
-        soup = BeautifulSoup(req.text, 'lxml')
-        id_element = soup.find('section', {'id': 'program-info'}) or soup.figure
-        if not id_element:
-            program_id = None
-        else:
-            program_id = (id_element.get('data-ga-from-id') or
-                          id_element.get('data-video-id'))
-    return program_id
+        return None
+    soup = BeautifulSoup(req.text, 'lxml')
+    # Standard player
+    section_element = soup.find('section', {'id': 'program-info'})
+    if section_element:
+        return section_element.get('data-ga-from-id')
+    # New series player
+    json_element = soup.find('script', {'type': 'application/ld+json'})
+    if json_element:
+        return json.loads(json_element.get_text()).get('@id')
+    # Articles with videos
+    if soup.figure:
+        return soup.figure.get('data-video-id')
+    return None
 
 
 def get_program_id_from_media_id(media_id):
@@ -158,7 +162,7 @@ def main(programs):
             download(program_id)
         else:
             error(u"Could not parse program ID from '{}'".format(program))
-        
+
 
 def get_argument_parser():
     parser = argparse.ArgumentParser(description='Python script for downloading video and audio from NRK (Norwegian Broadcasting Corporation).')
