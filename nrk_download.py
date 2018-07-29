@@ -10,7 +10,7 @@ import json
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.1.3"
+VERSION = "1.1.4"
 
 TVAPI_HEADERS  = {'app-version-android': '999'}
 TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/{}"
