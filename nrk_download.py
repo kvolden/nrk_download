@@ -189,4 +189,7 @@ def get_argument_parser():
 
 if __name__ == "__main__":
     programs = get_argument_parser().parse_args().PROGRAMS
-    main(programs)
+    try:
+        main(programs)
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt detected. Exiting.\n")
