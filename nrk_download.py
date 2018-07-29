@@ -97,8 +97,7 @@ def download(program_id):
     if type(program_id) == list:
         any(download(id) for id in program_id)
     else:
-        req = get_req(TVAPI_BASE_URL.format(program_id), TVAPI_HEADERS)
-        tvapi_data = req.json()
+        tvapi_data = get_req(TVAPI_BASE_URL.format(program_id), TVAPI_HEADERS).json()
         if not tvapi_data:
             error("Empty response from server. Non-existing program ID?")
         elif 'mediaUrl' not in tvapi_data:
@@ -107,12 +106,11 @@ def download(program_id):
             meta = {'title': tvapi_data.get('fullTitle') or json_data.get('title'),
                     'subtitles': tvapi_data.get('hasSubtitles'),
                     'stream': tvapi_data['mediaUrl']}
-            # Article style ids follow a specific pattern. In these cases,
+            # Ludo style ids follow a specific pattern. In these cases,
             # mediaUrl contains a non-functional manifest link. Get the
             # manifest from a different API.
             if re.search('([0-9a-f]+-){4}[0-9a-f]+', program_id):
-                req = get_req(PSAPI_BASE_URL.format(program_id))
-                psapi_data = req.json()
+                psapi_data = get_req(PSAPI_BASE_URL.format(program_id)).json()
                 meta['stream'] = psapi_data['playable']['assets'][0]['url']
             save_stream(meta)
             print('\n')
@@ -132,6 +130,10 @@ def get_program_id_from_html(url):
     json_element = soup.find('script', {'type': 'application/ld+json'})
     if json_element:
         return json.loads(json_element.get_text()).get('@id')
+    # NRK Super
+    div_element = soup.find('div', {'data-nrk-id': True})
+    if div_element:
+        return div_element.get('data-nrk-id')
     # Articles with videos, return list of program ids
     figures = soup.findAll('figure', {'data-video-id': True})
     if figures:
