@@ -15,6 +15,7 @@ VERSION = "1.1.3"
 TVAPI_HEADERS  = {'app-version-android': '999'}
 TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/{}"
 MIMIR_BASE_URL = "https://mimir.nrk.no/plugin/1.0/static?mediaId={}"
+PSAPI_BASE_URL = "https://psapi.nrk.no/playback/manifest/clip/{}"
 
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
@@ -42,7 +43,7 @@ def create_filename_base(title):
         i = 1
         while os.path.isfile(u'{} ({}).ts'.format(basename, i)):
             i += 1
-        basename = u'{} ({}).ts'.format(basename, i)
+        basename = u'{} ({})'.format(basename, i)
     return basename
 
 
@@ -81,28 +82,40 @@ def save_subtitles(media_url, filename):
         f.write(srt)
 
 
-def save_stream(json_data):
-    title = json_data.get('fullTitle') or json_data.get('title')
-    print(u"Found {}".format(title))
-    filename_base = create_filename_base(title)
+def save_stream(meta):
+    print(u"Found {}".format(meta['title']))
+    filename_base = create_filename_base(meta['title'])
 
-    if json_data.get('hasSubtitles'):
-        save_subtitles(json_data['mediaUrl'], u'{}.srt'.format(filename_base))
+    if meta['subtitles']:
+        save_subtitles(meta['stream'], u'{}.srt'.format(filename_base))
 
     print(u"Saving {}.ts\n".format(filename_base))
-    hls.dump(json_data['mediaUrl'], u'{}.ts'.format(filename_base), progress)
+    hls.dump(meta['stream'], u'{}.ts'.format(filename_base), progress)
 
 
 def download(program_id):
-    req = get_req(TVAPI_BASE_URL.format(program_id), TVAPI_HEADERS)
-    response_data = req.json()
-    if not response_data:
-        error("Empty response from server. Non-existing program ID?")
-    elif 'mediaUrl' not in response_data:
-        error("Could not find media stream. No longer available?")
+    if type(program_id) == list:
+        any(download(id) for id in program_id)
     else:
-        save_stream(response_data)
-        print('\n')
+        req = get_req(TVAPI_BASE_URL.format(program_id), TVAPI_HEADERS)
+        tvapi_data = req.json()
+        if not tvapi_data:
+            error("Empty response from server. Non-existing program ID?")
+        elif 'mediaUrl' not in tvapi_data:
+            error("Could not find media stream. No longer available?")
+        else:
+            meta = {'title': tvapi_data.get('fullTitle') or json_data.get('title'),
+                    'subtitles': tvapi_data.get('hasSubtitles'),
+                    'stream': tvapi_data['mediaUrl']}
+            # Article style ids follow a specific pattern. In these cases,
+            # mediaUrl contains a non-functional manifest link. Get the
+            # manifest from a different API.
+            if re.search('([0-9a-f]+-){4}[0-9a-f]+', program_id):
+                req = get_req(PSAPI_BASE_URL.format(program_id))
+                psapi_data = req.json()
+                meta['stream'] = psapi_data['playable']['assets'][0]['url']
+            save_stream(meta)
+            print('\n')
 
 
 def get_program_id_from_html(url):
@@ -119,9 +132,11 @@ def get_program_id_from_html(url):
     json_element = soup.find('script', {'type': 'application/ld+json'})
     if json_element:
         return json.loads(json_element.get_text()).get('@id')
-    # Articles with videos
-    if soup.figure:
-        return soup.figure.get('data-video-id')
+    # Articles with videos, return list of program ids
+    figures = soup.findAll('figure', {'data-video-id': True})
+    if figures:
+        return [figure.get('data-video-id') for figure in figures]
+    # Could not find anything
     return None
 
 
