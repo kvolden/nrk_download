@@ -12,10 +12,8 @@ from libs import hls
 
 VERSION = "1.1.4"
 
-TVAPI_HEADERS  = {'app-version-android': '999'}
-TVAPI_BASE_URL = "https://tvapi.nrk.no/v1/programs/{}"
-MIMIR_BASE_URL = "https://mimir.nrk.no/plugin/1.0/static?mediaId={}"
-PSAPI_BASE_URL = "https://psapi.nrk.no/playback/manifest/clip/{}"
+# Currently not clear if API-key is needed
+API_KEY = ''
 
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
@@ -30,7 +28,7 @@ def get_req(url, headers = None):
     try:
         req = requests.get(url, headers = headers)
     except requests.exceptions.MissingSchema:
-        req = get_req("https://{}".format(url), session)
+        req = get_req("https://{}".format(url), headers)
     except requests.exceptions.RequestException as e:
         error(e)
         req = None
@@ -57,24 +55,18 @@ def nrk_vtt_to_srt(vtt):
     return '\n\n'.join(srt_cues)
 
 
-def get_vtt_file_url(media_url):
-    main_manifest_req = get_req(media_url)
-    for line in main_manifest_req.text.splitlines():
-        if line.startswith('#EXT-X-MEDIA:TYPE=SUBTITLES'):
-            sub_stream_line = line
-            break
-    sub_manifest_url = re.search('URI="([^"]+)"', sub_stream_line).group(1)
-    sub_manifest_req = get_req(sub_manifest_url)
-    for line in sub_manifest_req.text.splitlines():
-        if not line[0] == '#':
-            sub_filename = line
-            break
-    return requests.compat.urljoin(sub_manifest_url, sub_filename)
+def get_vtt_file_url(subs_manifest_url):
+    # For some reason, the subtitles manifest url is percent encoded
+    subs_manifest_url = requests.utils.unquote(subs_manifest_url)
+    req = get_req(subs_manifest_url)
+    for line in req.text.splitlines():
+        if not line.startswith('#'):
+            return requests.compat.urljoin(subs_manifest_url, line)
 
 
-def save_subtitles(media_url, filename):
+def save_subtitles(manifest_url, filename):
     print(u"Saving {}".format(filename))
-    sub_url = get_vtt_file_url(media_url)
+    sub_url = get_vtt_file_url(manifest_url)
     vtt_req = get_req(sub_url)
     srt = nrk_vtt_to_srt(vtt_req.text)
 
@@ -87,33 +79,35 @@ def save_stream(meta):
     filename_base = create_filename_base(meta['title'])
 
     if meta['subtitles']:
-        save_subtitles(meta['stream'], u'{}.srt'.format(filename_base))
+        save_subtitles(meta['subtitles'], u'{}.srt'.format(filename_base))
 
     print(u"Saving {}.ts\n".format(filename_base))
     hls.dump(meta['stream'], u'{}.ts'.format(filename_base), progress)
+
+
+def get_meta(program_id):
+    metadata = get_req('https://psapi.nrk.no/mediaelement/{}?apiKey={}'.format(program_id, API_KEY)).json()
+    manifest = get_req('https://psapi.nrk.no/playback/manifest/{}?apiKey={}'.format(program_id, API_KEY)).json()
+    if 'message' in metadata:
+        error(metadata['message'])
+        return None
+    try:
+        subtitles = manifest['playable']['subtitles'][0]['webVtt']
+    except IndexError:
+        subtitles = False
+    return {'title': metadata['fullTitle'],
+            'subtitles': subtitles,
+            'stream': manifest['playable']['assets'][0]['url']}
 
 
 def download(program_id):
     if type(program_id) == list:
         any(download(id) for id in program_id)
     else:
-        tvapi_data = get_req(TVAPI_BASE_URL.format(program_id), TVAPI_HEADERS).json()
-        if not tvapi_data:
-            error("Empty response from server. Non-existing program ID?")
-        elif 'mediaUrl' not in tvapi_data:
-            error("Could not find media stream. No longer available?")
-        else:
-            meta = {'title': tvapi_data.get('fullTitle') or json_data.get('title'),
-                    'subtitles': tvapi_data.get('hasSubtitles'),
-                    'stream': tvapi_data['mediaUrl']}
-            # Ludo style ids follow a specific pattern. In these cases,
-            # mediaUrl contains a non-functional manifest link. Get the
-            # manifest from a different API.
-            if re.search('([0-9a-f]+-){4}[0-9a-f]+', program_id):
-                psapi_data = get_req(PSAPI_BASE_URL.format(program_id)).json()
-                meta['stream'] = psapi_data['playable']['assets'][0]['url']
+        meta = get_meta(program_id)
+        if meta != None:
             save_stream(meta)
-            print('\n')
+        print('\n')
 
 
 def get_program_id_from_html(url):
@@ -143,8 +137,7 @@ def get_program_id_from_html(url):
 
 
 def get_program_id_from_media_id(media_id):
-    url = MIMIR_BASE_URL.format(media_id)
-    req = get_req(url)
+    req = get_req('https://mimir.nrk.no/plugin/1.0/static?mediaId={}'.format(media_id))
     if not req:
         program_id = None
     else:
