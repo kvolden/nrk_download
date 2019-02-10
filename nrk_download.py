@@ -55,19 +55,9 @@ def nrk_vtt_to_srt(vtt):
     return '\n\n'.join(srt_cues)
 
 
-def get_vtt_file_url(subs_manifest_url):
-    # For some reason, the subtitles manifest url is percent encoded
-    subs_manifest_url = requests.utils.unquote(subs_manifest_url)
-    req = get_req(subs_manifest_url)
-    for line in req.text.splitlines():
-        if not line.startswith('#'):
-            return requests.compat.urljoin(subs_manifest_url, line)
-
-
-def save_subtitles(manifest_url, filename):
+def save_subtitles(subtitles_url, filename):
     print(u"Saving {}".format(filename))
-    sub_url = get_vtt_file_url(manifest_url)
-    vtt_req = get_req(sub_url)
+    vtt_req = get_req(subtitles_url)
     srt = nrk_vtt_to_srt(vtt_req.text)
 
     with io.open(filename, 'w') as f:
