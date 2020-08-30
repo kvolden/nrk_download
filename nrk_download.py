@@ -10,7 +10,7 @@ import json
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.1.6"
+VERSION = "1.1.7"
 
 # Currently not clear if API-key is needed
 API_KEY = ''
