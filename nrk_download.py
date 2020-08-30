@@ -58,6 +58,7 @@ def nrk_vtt_to_srt(vtt):
 def save_subtitles(subtitles_url, filename):
     print(u"Saving {}".format(filename))
     vtt_req = get_req(subtitles_url)
+    vtt_req.encoding = 'utf-8'
     srt = nrk_vtt_to_srt(vtt_req.text)
 
     with io.open(filename, 'w') as f:
