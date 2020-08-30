@@ -106,14 +106,18 @@ def get_program_id_from_html(url):
     if not req:
         return None
     soup = BeautifulSoup(req.text, 'lxml')
-    # Standard player
+    # ID inside Meta tag
+    meta_element = soup.find('meta', {'property': 'nrk:program-id'})
+    if meta_element:
+        return meta_element.get('content')
+    # ID inside Section element
     section_element = soup.find('section', {'id': 'program-info'})
     if section_element:
         return section_element.get('data-ga-from-id')
-    # New series player
+    # ID inside JSON script tag
     json_element = soup.find('script', {'type': 'application/ld+json'})
     if json_element:
-        return json.loads(json_element.get_text()).get('@id')
+        return json.loads(json_element.string).get('@id')
     # NRK Super
     div_element = soup.find('div', {'data-nrk-id': True})
     if div_element:
