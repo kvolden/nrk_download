@@ -97,7 +97,7 @@ def get_meta(program_id):
         subtitles = manifest['playable']['subtitles'][0]['webVtt']
     except IndexError:
         subtitles = False
-    return {'title': '{} {}'.format(metadata['preplay']['titles']['title'], metadata['preplay']['titles']['subtitle']),
+    return {'title': ' '.join([s for s in metadata['preplay']['titles'].values() if s]),
             'subtitles': subtitles,
             'stream': manifest['playable']['assets'][0]['url']}
 
