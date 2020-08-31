@@ -129,7 +129,9 @@ def get_program_id_from_html(url):
     # ID inside JSON script tag
     json_element = soup.find('script', {'type': 'application/ld+json'})
     if json_element:
-        return json.loads(json_element.string).get('@id')
+        program_id = json.loads(json_element.string).get('@id')
+        if program_id:
+            return program_id
     # NRK Super
     div_element = soup.find('div', {'data-nrk-id': True})
     if div_element:
