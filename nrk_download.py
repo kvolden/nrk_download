@@ -12,9 +12,6 @@ from libs import hls
 
 VERSION = "1.1.7"
 
-# Currently not clear if API-key is needed
-API_KEY = ''
-
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
     sys.stdout.flush()
@@ -65,6 +62,16 @@ def save_subtitles(subtitles_url, filename):
         f.write(srt)
 
 
+def save_file(url, filename):
+    with requests.get(url, stream = True) as req:
+        file_size = int(req.headers["Content-Length"])
+        chunk_size = 5120
+        with open(filename, 'wb') as f:
+            for i, chunk in enumerate(req.iter_content(chunk_size = chunk_size)):
+                progress(round(100 * chunk_size * i / file_size))
+                f.write(chunk)
+
+
 def save_stream(meta):
     print(u"Found {}".format(meta['title']))
     filename_base = create_filename_base(meta['title'])
@@ -72,13 +79,17 @@ def save_stream(meta):
     if meta['subtitles']:
         save_subtitles(meta['subtitles'], u'{}.srt'.format(filename_base))
 
-    print(u"Saving {}.ts\n".format(filename_base))
-    hls.dump(meta['stream'], u'{}.ts'.format(filename_base), progress)
+    if meta['stream'].endswith('.mp3'):
+        print(u"Saving {}.mp3\n".format(filename_base))
+        save_file(meta['stream'], u'{}.mp3'.format(filename_base))
+    else:
+        print(u"Saving {}.ts\n".format(filename_base))
+        hls.dump(meta['stream'], u'{}.ts'.format(filename_base), progress)
 
 
 def get_meta(program_id):
-    metadata = get_req('https://psapi.nrk.no/mediaelement/{}?apiKey={}'.format(program_id, API_KEY)).json()
-    manifest = get_req('https://psapi.nrk.no/playback/manifest/{}?apiKey={}'.format(program_id, API_KEY)).json()
+    metadata = get_req('https://psapi.nrk.no/playback/metadata/{}'.format(program_id)).json()
+    manifest = get_req('https://psapi.nrk.no/playback/manifest/{}'.format(program_id)).json()
     if 'message' in metadata:
         error(metadata['message'])
         return None
@@ -86,7 +97,7 @@ def get_meta(program_id):
         subtitles = manifest['playable']['subtitles'][0]['webVtt']
     except IndexError:
         subtitles = False
-    return {'title': metadata['fullTitle'],
+    return {'title': '{} {}'.format(metadata['preplay']['titles']['title'], metadata['preplay']['titles']['subtitle']),
             'subtitles': subtitles,
             'stream': manifest['playable']['assets'][0]['url']}
 
@@ -127,6 +138,11 @@ def get_program_id_from_html(url):
     figures = soup.findAll('figure', {'data-video-id': True})
     if figures:
         return [figure.get('data-video-id') for figure in figures]
+    # At last try to extract the URL self reference from the HTML
+    # and try to extract ID from that as a string
+    meta_url = soup.find('meta', {'property': 'og:url'})
+    if meta_url:
+        return get_program_id_from_string(meta_url.get('content'))
     # Could not find anything
     return None
 
@@ -142,20 +158,24 @@ def get_program_id_from_media_id(media_id):
     return program_id
 
 
-def get_program_id(passed_string):
-    # Extract program ID from string:
-    program_id_match = (re.search("(^|/)([A-Z]{4}\d{8})($|/)", passed_string) or
-                        re.search("(^|/)PS\*([\da-f-]+)($|/)", passed_string))
+def get_program_id_from_string(program):
+    program_id_match = (re.search("(^|/)([A-Z]{4}\d{8})($|/)", program) or
+                        re.search("(^|/)PS\*([\da-f-]+)($|/)", program) or
+                        re.search("(^|/)(l_[\da-f-]+)($|/)", program))
+    media_id_match = re.search("(^|mediaId=)([0-9]+)($|&)", program)
     if program_id_match:
-        program_id = program_id_match.group(2)
+        return program_id_match.group(2)
+    elif media_id_match:
+        return get_program_id_from_media_id(media_id_match.group(2))
+    return None
+
+
+def get_program_id(program):
+    program_id = get_program_id_from_string(program)
+    if program_id:
+        return program_id
     else:
-        # nrk.no/skole style mediaId:
-        media_id_match = re.search("(^|mediaId=)([0-9]+)($|&)", passed_string)
-        if media_id_match:
-            program_id = get_program_id_from_media_id(media_id_match.group(2))
-        else:
-            program_id = get_program_id_from_html(passed_string)
-    return program_id
+        return get_program_id_from_html(program)
 
 
 def main(programs):
