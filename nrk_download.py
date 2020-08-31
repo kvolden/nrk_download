@@ -10,7 +10,7 @@ import json
 from bs4 import BeautifulSoup
 from libs import hls
 
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 
 def progress(pct):
     sys.stdout.write("\rProgress: {}%".format(pct))
