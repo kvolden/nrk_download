@@ -72,9 +72,9 @@ def save_file(url, filename):
                 f.write(chunk)
 
 
-def save_stream(meta):
+def save_stream(meta, output_file):
     print(u"Found {}".format(meta['title']))
-    filename_base = create_filename_base(meta['title'])
+    filename_base = output_file if output_file else create_filename_base(meta['title'])
 
     if meta['subtitles']:
         save_subtitles(meta['subtitles'], u'{}.srt'.format(filename_base))
@@ -105,13 +105,13 @@ def get_meta(program_id):
             'stream': manifest['playable']['assets'][0]['url']}
 
 
-def download(program_id):
+def download(program_id, output_file):
     if type(program_id) == list:
         any(download(id) for id in program_id)
     else:
         meta = get_meta(program_id)
         if meta != None:
-            save_stream(meta)
+            save_stream(meta, output_file)
         print('\n')
 
 
@@ -183,26 +183,28 @@ def get_program_id(program):
         return get_program_id_from_html(program)
 
 
-def main(programs):
+def main(programs, output_file):
     print("NRK Download {}\n".format(VERSION))
     for i, program in enumerate(programs):
         print(u"Downloading {} of {}:".format(i+1, len(programs)))
         program_id = get_program_id(program)
         if program_id:
-            download(program_id)
+            download(program_id, output_file)
         else:
             error(u"Could not parse program ID from '{}'".format(program))
 
 
 def get_argument_parser():
     parser = argparse.ArgumentParser(description='Python script for downloading video and audio from NRK (Norwegian Broadcasting Corporation).')
-    parser.add_argument("PROGRAMS", type=str, nargs="+", help="A list of URLs or program IDs to download")
+    parser.add_argument("-o", "--output", help="Output file name without extension. Take care if used with multiple PROGRAMS arguments.")
+    parser.add_argument("PROGRAMS", nargs="+", help="A list of URLs or program IDs to download")
     return parser
 
 
 if __name__ == "__main__":
     programs = get_argument_parser().parse_args().PROGRAMS
+    output_file = get_argument_parser().parse_args().output
     try:
-        main(programs)
+        main(programs, output_file)
     except KeyboardInterrupt:
         print("\nKeyboard interrupt detected. Exiting.\n")
