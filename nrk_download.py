@@ -97,7 +97,10 @@ def get_meta(program_id):
         subtitles = manifest['playable']['subtitles'][0]['webVtt']
     except IndexError:
         subtitles = False
-    return {'title': ' '.join([s for s in metadata['preplay']['titles'].values() if s]),
+    # The subtitle field is sometimes identical to the description field. In
+    # these cases, it is very likely correct to drop the subtitle from the
+    # title.
+    return {'title': ' '.join([s for s in metadata['preplay']['titles'].values() if s and s != metadata['preplay']['description']]),
             'subtitles': subtitles,
             'stream': manifest['playable']['assets'][0]['url']}
 
